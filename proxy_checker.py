@@ -5,8 +5,11 @@ import socks
 import time
 import re
 from colorama import Fore, init
+from collections import Counter
 
 init(autoreset=True)
+
+error_counter = Counter()
 
 def print_title():
     title = """
@@ -22,7 +25,7 @@ def print_title():
 def is_valid_proxy(proxy):
     return bool(re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$', proxy))
 
-def check_proxy(proxy):
+def check_proxy(proxy, max_retries=3):
     if not is_valid_proxy(proxy):
         return None
     
@@ -30,28 +33,33 @@ def check_proxy(proxy):
     port = int(port)
 
     for proxy_type in ['http', 'socks4', 'socks5']:
-        try:
-            start = time.time()
-            if proxy_type == 'http':
-                s = requests.Session()
-                s.proxies = {'http': f'http://{proxy}', 'https': f'http://{proxy}'}
-                r = s.get('http://httpbin.org/ip', timeout=5)
-                if r.status_code == 200:
+        for attempt in range(max_retries):
+            try:
+                start = time.time()
+                if proxy_type == 'http':
+                    s = requests.Session()
+                    s.proxies = {'http': f'http://{proxy}', 'https': f'http://{proxy}'}
+                    r = s.get('http://httpbin.org/ip', timeout=5)
+                    if r.status_code == 200:
+                        speed = time.time() - start
+                        print(Fore.GREEN + f"[+] HTTP proxy {proxy} is working. Speed: {speed:.2f}s")
+                        return proxy, 'http', speed
+                else:
+                    s = socks.socksocket()
+                    s.set_proxy(socks.SOCKS5 if proxy_type == 'socks5' else socks.SOCKS4, ip, port)
+                    s.settimeout(5)
+                    s.connect(('httpbin.org', 80))
                     speed = time.time() - start
-                    print(Fore.GREEN + f"[+] HTTP proxy {proxy} is working. Speed: {speed:.2f}s")
-                    return proxy, 'http', speed
-            else:
-                s = socks.socksocket()
-                s.set_proxy(socks.SOCKS5 if proxy_type == 'socks5' else socks.SOCKS4, ip, port)
-                s.settimeout(5)
-                s.connect(('httpbin.org', 80))
-                speed = time.time() - start
-                print(Fore.GREEN + f"[+] {proxy_type.upper()} proxy {proxy} is working. Speed: {speed:.2f}s")
-                return proxy, proxy_type, speed
-        except:
-            pass
+                    print(Fore.GREEN + f"[+] {proxy_type.upper()} proxy {proxy} is working. Speed: {speed:.2f}s")
+                    return proxy, proxy_type, speed
+            except Exception as e:
+                error_type = type(e).__name__
+                error_counter[error_type] += 1
+                if attempt == max_retries - 1:
+                    print(Fore.RED + f"[-] Proxy {proxy} is not working: {error_type}")
+                else:
+                    print(Fore.YELLOW + f"[!] Retrying proxy {proxy} ({attempt + 1}/{max_retries})")
 
-    print(Fore.RED + f"[-] Proxy {proxy} is not working")
     return None
 
 def load_proxies(proxy_source):
@@ -104,6 +112,10 @@ def main():
     elapsed_time = time.time() - start_time
     print(Fore.CYAN + f"\nTotal proxies checked: {total_proxies}")
     print(Fore.CYAN + f"Total time taken: {elapsed_time:.2f} seconds")
+
+    print(Fore.YELLOW + "\nError summary:")
+    for error_type, count in error_counter.items():
+        print(f"{error_type}: {count}")
 
 if __name__ == "__main__":
     main()
